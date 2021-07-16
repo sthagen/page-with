@@ -3,7 +3,7 @@ import * as path from 'path'
 import { Express } from 'express'
 import { ChromiumBrowserContext, Page } from 'playwright'
 import { browser, server } from './createBrowser'
-import { PreviewServer } from './server/PreviewServer'
+import { PreviewServer, ServerOptions } from './server/PreviewServer'
 import { createLogger } from './internal/createLogger'
 import { RequestHelperFn, createRequestUtil } from './utils/request'
 import { debug } from './utils/debug'
@@ -17,6 +17,8 @@ export interface PageWithOptions {
   contentBase?: string
   routes?(app: Express): void
   title?: string
+  env?: Record<string, string | number | boolean>
+  serverOptions?: ServerOptions
 }
 
 export interface ScenarioApi {
@@ -78,6 +80,12 @@ export async function pageWith(options: PageWithOptions): Promise<ScenarioApi> {
 
   const cleanupRoutes = options.routes ? server.use(options.routes) : null
 
+  if (options.serverOptions) {
+    Object.entries(options.serverOptions).forEach(([name, value]) => {
+      server.setOption(name as any, value)
+    })
+  }
+
   const [context] = await Promise.all([
     browser.newContext(),
     server.compile(example),
@@ -95,6 +103,15 @@ export async function pageWith(options: PageWithOptions): Promise<ScenarioApi> {
 
   log('navigating to the compiled example...', serverContext.previewUrl)
   await page.goto(serverContext.previewUrl, { waitUntil: 'networkidle' })
+
+  if (options.env) {
+    await page.evaluate((variables) => {
+      variables.forEach(([variableName, value]) => {
+        // @ts-expect-error Adding a custom "window" property.
+        window[variableName] = value
+      })
+    }, Object.entries(options.env))
+  }
 
   page.on('close', () => {
     log('closing the page...')
